@@ -22,60 +22,44 @@ use i18n_embed::{
   DesktopLanguageRequester,
 };
 use i18n_embed_fl::fl;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
+use i18n_embed::unic_langid::LanguageIdentifier;
 
-pub static LANGUAGE_LOADER: Lazy<FluentLanguageLoader> = Lazy::new(|| {
+pub static LANGUAGE_LOADER: LazyLock<FluentLanguageLoader> = LazyLock::new(|| {
     let loader = fluent_language_loader!();
     let requested_languages = DesktopLanguageRequester::requested_languages();
     let _result = i18n_embed::select(&loader, &Localizations, &requested_languages);
     loader
 });
 
+// Simple fallback until we implement proper runtime locale switching
 fn translate(key: &str, language: Language) -> String {
-    match language {
-        Language::Korean => match key {
-            "app-title" => fl!(LANGUAGE_LOADER, "app-title"),
-            "loading" => fl!(LANGUAGE_LOADER, "loading"),
-            "add-task-placeholder" => fl!(LANGUAGE_LOADER, "add-task-placeholder"),
-            "describe-task-placeholder" => fl!(LANGUAGE_LOADER, "describe-task-placeholder"),
-            "filter-all" => fl!(LANGUAGE_LOADER, "filter-all"),
-            "filter-active" => fl!(LANGUAGE_LOADER, "filter-active"),
-            "filter-completed" => fl!(LANGUAGE_LOADER, "filter-completed"),
-            "empty-no-tasks" => fl!(LANGUAGE_LOADER, "empty-no-tasks"),
-            "empty-all-done" => fl!(LANGUAGE_LOADER, "empty-all-done"),
-            "empty-no-completed" => fl!(LANGUAGE_LOADER, "empty-no-completed"),
-            "language-toggle" => "EN".to_string(),
-            _ => key.to_string(),
-        },
-        Language::English => match key {
-            "app-title" => fl!(LANGUAGE_LOADER, "app-title"),
-            "loading" => "Loading...".to_string(),
-            "add-task-placeholder" => "Add Task".to_string(),
-            "describe-task-placeholder" => "Describe your task...".to_string(),
-            "filter-all" => "All".to_string(),
-            "filter-active" => "Active".to_string(),
-            "filter-completed" => "Done".to_string(),
-            "empty-no-tasks" => "You have not created a task yet...".to_string(),
-            "empty-all-done" => "All your tasks are done! :D".to_string(),
-            "empty-no-completed" => "You have not completed a task yet...".to_string(),
-            "language-toggle" => "KO".to_string(),
-            _ => key.to_string(),
-        },
+    // Special case for language toggle - show the OTHER language
+    if key == "language-toggle" {
+        return match language {
+            Language::Korean => "En".to_string(),
+            Language::English => "Ko".to_string(),
+        };
+    }
+
+    // For other keys, use fl! macro (which uses system locale, not the language parameter)
+    match key {
+        "app-title" => fl!(LANGUAGE_LOADER, "app-title"),
+        "loading" => fl!(LANGUAGE_LOADER, "loading"),
+        "add-task-placeholder" => fl!(LANGUAGE_LOADER, "add-task-placeholder"),
+        "describe-task-placeholder" => fl!(LANGUAGE_LOADER, "describe-task-placeholder"),
+        "filter-all" => fl!(LANGUAGE_LOADER, "filter-all"),
+        "filter-active" => fl!(LANGUAGE_LOADER, "filter-active"),
+        "filter-completed" => fl!(LANGUAGE_LOADER, "filter-completed"),
+        "empty-no-tasks" => fl!(LANGUAGE_LOADER, "empty-no-tasks"),
+        "empty-all-done" => fl!(LANGUAGE_LOADER, "empty-all-done"),
+        "empty-no-completed" => fl!(LANGUAGE_LOADER, "empty-no-completed"),
+        _ => key.to_string(),
     }
 }
 
-fn translate_tasks_left(count: usize, language: Language) -> String {
-    match language {
-        Language::Korean => match count {
-            0 => "남은 작업 없음".to_string(),
-            _ => format!("{}개 작업 남음", count),
-        },
-        Language::English => match count {
-            0 => "No tasks left".to_string(),
-            1 => "1 task left".to_string(),
-            _ => format!("{} tasks left", count),
-        },
-    }
+fn translate_tasks_left(count: usize, _language: Language) -> String {
+    fl!(LANGUAGE_LOADER, "tasks-left", count = count)
 }
 
 fn main() -> iced::Result {
@@ -83,7 +67,7 @@ fn main() -> iced::Result {
     tracing_subscriber::fmt::init();
 
     // Initialize i18n by accessing the lazy static
-    Lazy::force(&LANGUAGE_LOADER);
+    LazyLock::force(&LANGUAGE_LOADER);
     init_audio();
 
     iced::application(Todos::new, Todos::update, Todos::view)
@@ -279,6 +263,14 @@ impl Todos {
                     }
                     Message::LanguageChanged(language) => {
                         state.language = language;
+                        
+                        // Update the language loader immediately
+                        let lang_ids = match language {
+                            Language::Korean => vec!["ko-KR".parse::<LanguageIdentifier>().unwrap()],
+                            Language::English => vec!["en-US".parse::<LanguageIdentifier>().unwrap()],
+                        };
+                        let _result = i18n_embed::select(&*LANGUAGE_LOADER, &Localizations, &lang_ids);
+                        
                         Command::none()
                     }
                     Message::Loaded(_) => Command::none(),
