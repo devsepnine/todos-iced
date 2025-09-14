@@ -13,6 +13,10 @@ directories = "6.0.0"
 serde = { version = "1.0.219", features = ["derive"] }
 uuid = { version = "1.18.1", features = ["v4", "serde"] }
 rodio = "0.21.1"
+i18n-embed = { version = "0.16.0", features = ["fluent-system", "desktop-requester"] }
+i18n-embed-fl = "0.10.0"
+rust-embed = "8.7.2"
+once_cell = "1.21.3"
 
 [package.metadata.deb]
 assets = [

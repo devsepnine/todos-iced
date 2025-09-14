@@ -1,0 +1,15 @@
+# The language identifier of the language used in the source code for
+# `fluent-templates` to replace anything that it cannot find in the selected 
+# language.
+fallback_language = "en"
+
+# The list of languages that the software will be translated into.
+[languages]
+en = "English"
+ko = "한국어"
+
+[fluent]
+# Directory with fluent files
+assets_dir = "i18n"
+# Fallback language for Fluent bundle
+fallback_language = "en"

@@ -2,8 +2,8 @@
 
 use iced::keyboard::{self, key};
 use iced::widget::{
-    self, button, center, center_x, checkbox, column, container, keyed_column, mouse_area, row,
-    scrollable, text, text_input, Text,
+  self, button, center, center_x, checkbox, column, container, keyed_column, mouse_area, row,
+  scrollable, text, text_input, Text,
 };
 use iced::{window, Center, Element, Fill, Font, Function, Subscription, Task as Command, Theme};
 use rodio::{Decoder, OutputStreamBuilder, Sink};
@@ -11,12 +11,81 @@ use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use uuid::Uuid;
 
+use rust_embed::RustEmbed;
+
+#[derive(RustEmbed)]
+#[folder = "i18n"]
+struct Localizations;
+
+use i18n_embed::{
+  fluent::{fluent_language_loader, FluentLanguageLoader},
+  DesktopLanguageRequester,
+};
+use i18n_embed_fl::fl;
+use once_cell::sync::Lazy;
+
+pub static LANGUAGE_LOADER: Lazy<FluentLanguageLoader> = Lazy::new(|| {
+    let loader = fluent_language_loader!();
+    let requested_languages = DesktopLanguageRequester::requested_languages();
+    let _result = i18n_embed::select(&loader, &Localizations, &requested_languages);
+    loader
+});
+
+fn translate(key: &str, language: Language) -> String {
+    match language {
+        Language::Korean => match key {
+            "app-title" => fl!(LANGUAGE_LOADER, "app-title"),
+            "loading" => fl!(LANGUAGE_LOADER, "loading"),
+            "add-task-placeholder" => fl!(LANGUAGE_LOADER, "add-task-placeholder"),
+            "describe-task-placeholder" => fl!(LANGUAGE_LOADER, "describe-task-placeholder"),
+            "filter-all" => fl!(LANGUAGE_LOADER, "filter-all"),
+            "filter-active" => fl!(LANGUAGE_LOADER, "filter-active"),
+            "filter-completed" => fl!(LANGUAGE_LOADER, "filter-completed"),
+            "empty-no-tasks" => fl!(LANGUAGE_LOADER, "empty-no-tasks"),
+            "empty-all-done" => fl!(LANGUAGE_LOADER, "empty-all-done"),
+            "empty-no-completed" => fl!(LANGUAGE_LOADER, "empty-no-completed"),
+            "language-toggle" => "EN".to_string(),
+            _ => key.to_string(),
+        },
+        Language::English => match key {
+            "app-title" => fl!(LANGUAGE_LOADER, "app-title"),
+            "loading" => "Loading...".to_string(),
+            "add-task-placeholder" => "Add Task".to_string(),
+            "describe-task-placeholder" => "Describe your task...".to_string(),
+            "filter-all" => "All".to_string(),
+            "filter-active" => "Active".to_string(),
+            "filter-completed" => "Done".to_string(),
+            "empty-no-tasks" => "You have not created a task yet...".to_string(),
+            "empty-all-done" => "All your tasks are done! :D".to_string(),
+            "empty-no-completed" => "You have not completed a task yet...".to_string(),
+            "language-toggle" => "KO".to_string(),
+            _ => key.to_string(),
+        },
+    }
+}
+
+fn translate_tasks_left(count: usize, language: Language) -> String {
+    match language {
+        Language::Korean => match count {
+            0 => "남은 작업 없음".to_string(),
+            _ => format!("{}개 작업 남음", count),
+        },
+        Language::English => match count {
+            0 => "No tasks left".to_string(),
+            1 => "1 task left".to_string(),
+            _ => format!("{} tasks left", count),
+        },
+    }
+}
+
 fn main() -> iced::Result {
     #[cfg(not(target_arch = "wasm32"))]
     tracing_subscriber::fmt::init();
 
+    // Initialize i18n by accessing the lazy static
+    Lazy::force(&LANGUAGE_LOADER);
     init_audio();
-    
+
     iced::application(Todos::new, Todos::update, Todos::view)
         .subscription(Todos::subscription)
         .title(Todos::title)
@@ -46,6 +115,27 @@ enum Todos {
     Loaded(State),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Language {
+    English,
+    Korean,
+}
+
+impl Default for Language {
+    fn default() -> Self {
+        // Use system locale detection
+        let requested_languages = DesktopLanguageRequester::requested_languages();
+        if requested_languages
+            .iter()
+            .any(|lang| lang.language.as_str() == "ko")
+        {
+            Language::Korean
+        } else {
+            Language::English
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct State {
     input_value: String,
@@ -54,6 +144,7 @@ struct State {
     dirty: bool,
     saving: bool,
     input_hovered: bool,
+    language: Language,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +159,7 @@ enum Message {
     TaskMessage(usize, TaskMessage),
     TabPressed { shift: bool },
     ToggleFullscreen(window::Mode),
+    LanguageChanged(Language),
 }
 
 impl Todos {
@@ -83,12 +175,16 @@ impl Todos {
     }
 
     fn title(&self) -> String {
-        let dirty = match self {
-            Todos::Loading => false,
-            Todos::Loaded(state) => state.dirty,
+        let (dirty, language) = match self {
+            Todos::Loading => (false, Language::default()),
+            Todos::Loaded(state) => (state.dirty, state.language),
         };
 
-        format!("Todos{}", if dirty { "..." } else { "" })
+        format!(
+            "{}{}",
+            translate("app-title", language),
+            if dirty { "..." } else { "" }
+        )
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
@@ -181,6 +277,10 @@ impl Todos {
                     Message::ToggleFullscreen(mode) => {
                         window::latest().and_then(move |window| window::set_mode(window, mode))
                     }
+                    Message::LanguageChanged(language) => {
+                        state.language = language;
+                        Command::none()
+                    }
                     Message::Loaded(_) => Command::none(),
                 };
 
@@ -212,15 +312,16 @@ impl Todos {
 
     fn view(&self) -> Element<'_, Message> {
         match self {
-            Todos::Loading => loading_message(),
+            Todos::Loading => loading_message(Language::default()),
             Todos::Loaded(State {
                 input_value,
                 filter,
                 tasks,
                 input_hovered,
+                language,
                 ..
             }) => {
-                let input = text_input("Add Task", input_value)
+                let input = text_input(&translate("add-task-placeholder", *language), input_value)
                     .id("new-task")
                     .on_input(Message::InputChanged)
                     .on_submit(Message::CreateTask)
@@ -279,7 +380,7 @@ impl Todos {
                     })
                     .width(Fill);
 
-                let controls = view_controls(tasks, *filter);
+                let controls = view_controls(tasks, *filter, *language);
                 let filtered_tasks = tasks.iter().filter(|task| filter.matches(task));
 
                 let tasks: Element<_> = if filtered_tasks.count() > 0 {
@@ -296,11 +397,14 @@ impl Todos {
                     .height(Fill)
                     .into()
                 } else {
-                    empty_message(match filter {
-                        Filter::All => "You have not created a task yet...",
-                        Filter::Active => "All your tasks are done! :D",
-                        Filter::Completed => "You have not completed a task yet...",
-                    })
+                    {
+                        let key = match filter {
+                            Filter::All => "empty-no-tasks",
+                            Filter::Active => "empty-all-done",
+                            Filter::Completed => "empty-no-completed",
+                        };
+                        empty_message(key, *language)
+                    }
                 };
 
                 let header = controls;
@@ -436,27 +540,30 @@ impl Task {
                 .align_y(Center)
             }
             TaskState::Editing => {
-                let text_input = text_input("Describe your task...", &self.description)
-                    .id(Self::text_input_id(i))
-                    .on_input(TaskMessage::DescriptionEdited)
-                    .on_submit(TaskMessage::FinishEdition)
-                    .padding(10)
-                    .style(|theme: &Theme, status| {
-                        let default_style = text_input::default(theme, status);
+                let text_input = text_input(
+                    &fl!(LANGUAGE_LOADER, "describe-task-placeholder"),
+                    &self.description,
+                )
+                .id(Self::text_input_id(i))
+                .on_input(TaskMessage::DescriptionEdited)
+                .on_submit(TaskMessage::FinishEdition)
+                .padding(10)
+                .style(|theme: &Theme, status| {
+                    let default_style = text_input::default(theme, status);
 
-                        text_input::Style {
-                            background: iced::Color::TRANSPARENT.into(),
-                            border: iced::Border {
-                                color: iced::Color::TRANSPARENT,
-                                width: 0.0,
-                                radius: 0.0.into(),
-                            },
-                            icon: default_style.icon,
-                            placeholder: default_style.placeholder,
-                            value: default_style.value,
-                            selection: default_style.selection,
-                        }
-                    });
+                    text_input::Style {
+                        background: iced::Color::TRANSPARENT.into(),
+                        border: iced::Border {
+                            color: iced::Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: 0.0.into(),
+                        },
+                        icon: default_style.icon,
+                        placeholder: default_style.placeholder,
+                        value: default_style.value,
+                        selection: default_style.selection,
+                    }
+                });
 
                 row![
                     text_input,
@@ -485,11 +592,15 @@ impl Task {
     }
 }
 
-fn view_controls(tasks: &[Task], current_filter: Filter) -> Element<'_, Message> {
+fn view_controls(
+    tasks: &[Task],
+    current_filter: Filter,
+    language: Language,
+) -> Element<'_, Message> {
     let tasks_left = tasks.iter().filter(|task| !task.completed).count();
 
-    let filter_button = |label, filter, current_filter| {
-        let label = text(label);
+    let filter_button = |key, filter, current_filter| {
+        let label = text(translate(key, language));
 
         let button = button(label).style(if filter == current_filter {
             button::primary
@@ -508,17 +619,26 @@ fn view_controls(tasks: &[Task], current_filter: Filter) -> Element<'_, Message>
     };
 
     row![
-        text!(
-            "{tasks_left} {} left",
-            if tasks_left == 1 { "task" } else { "tasks" }
-        )
-        .width(Fill),
+        text(translate_tasks_left(tasks_left, language)).width(Fill),
         row![
-            filter_button("All", Filter::All, current_filter),
-            filter_button("Active", Filter::Active, current_filter),
-            filter_button("Done", Filter::Completed, current_filter,),
+            filter_button("filter-all", Filter::All, current_filter),
+            filter_button("filter-active", Filter::Active, current_filter),
+            filter_button("filter-completed", Filter::Completed, current_filter),
+            button(text(translate("language-toggle", language)).size(12))
+                .on_press(Message::LanguageChanged(match language {
+                    Language::Korean => Language::English,
+                    Language::English => Language::Korean,
+                }))
+                .padding(iced::Padding {
+                    top: 5.0,
+                    left: 8.0,
+                    bottom: 5.0,
+                    right: 8.0,
+                })
+                .style(button::text),
         ]
         .spacing(10)
+        .align_y(Center)
     ]
     .spacing(20)
     .align_y(Center)
@@ -543,13 +663,19 @@ impl Filter {
     }
 }
 
-fn loading_message<'a>() -> Element<'a, Message> {
-    center(text("Loading...").width(Fill).align_x(Center).size(50)).into()
+fn loading_message<'a>(language: Language) -> Element<'a, Message> {
+    center(
+        text(translate("loading", language))
+            .width(Fill)
+            .align_x(Center)
+            .size(50),
+    )
+    .into()
 }
 
-fn empty_message(message: &str) -> Element<'_, Message> {
+fn empty_message(key: &str, language: Language) -> Element<'_, Message> {
     center(
-        text(message)
+        text(translate(key, language))
             .width(Fill)
             .size(25)
             .align_x(Center)
