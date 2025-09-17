@@ -46,6 +46,15 @@ impl Task {
         }
     }
 
+    pub fn from_parts(id: Uuid, description: String, completed: bool) -> Self {
+        Task {
+            id,
+            description,
+            completed,
+            state: TaskState::Idle,
+        }
+    }
+
     pub fn id(&self) -> Uuid {
         self.id
     }

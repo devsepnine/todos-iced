@@ -1,6 +1,8 @@
-use serde::{Deserialize, Serialize};
-use crate::task::Task;
 use super::Filter;
+use crate::task::Task;
+use serde::{Deserialize, Serialize};
+
+pub mod sqlite_persistence;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedState {
@@ -18,7 +20,6 @@ pub enum LoadError {
 #[derive(Debug, Clone)]
 pub enum SaveError {
     Write,
-    Format,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -36,31 +37,17 @@ impl SavedState {
     }
 
     pub async fn load() -> Result<SavedState, LoadError> {
-        let contents = tokio::fs::read_to_string(Self::path())
+        let persistence = sqlite_persistence::SqlitePersistence::new()
             .await
             .map_err(|_| LoadError::File)?;
-
-        serde_json::from_str(&contents).map_err(|_| LoadError::Format)
+        persistence.load().await
     }
 
     pub async fn save(self) -> Result<(), SaveError> {
-        let json = serde_json::to_string_pretty(&self).map_err(|_| SaveError::Format)?;
-
-        let path = Self::path();
-
-        if let Some(dir) = path.parent() {
-            tokio::fs::create_dir_all(dir)
-                .await
-                .map_err(|_| SaveError::Write)?;
-        }
-
-        tokio::fs::write(path, json.as_bytes())
+        let persistence = sqlite_persistence::SqlitePersistence::new()
             .await
             .map_err(|_| SaveError::Write)?;
-
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-        Ok(())
+        persistence.save(self).await
     }
 }
 
